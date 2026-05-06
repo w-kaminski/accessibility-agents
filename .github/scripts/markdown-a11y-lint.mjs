@@ -9,6 +9,7 @@
 
 import { readFileSync, readdirSync, lstatSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, relative, extname, dirname } from "node:path";
+import { execSync } from "node:child_process";
 
 const EXTENSIONS = new Set([".md", ".mdx"]);
 const DEFAULT_IGNORED_DIRS = [
@@ -43,6 +44,9 @@ function parseArgs(argv) {
     failOn: "error",
     format: "text",
     output: null,
+    // regression mode: only fail on issues present in files changed vs a baseline
+    regressionMode: false,
+    baselineRef: "HEAD~1",
   };
 
   const positionals = [];
@@ -56,6 +60,10 @@ function parseArgs(argv) {
       options.format = (argv[++i] || "text").toLowerCase();
     } else if (arg === "--output") {
       options.output = argv[++i];
+    } else if (arg === "--regression") {
+      options.regressionMode = true;
+    } else if (arg === "--baseline-ref") {
+      options.baselineRef = argv[++i] || "HEAD~1";
     } else if (arg.startsWith("-")) {
       // Unknown flag; ignore for backward compatibility.
     } else {
@@ -86,6 +94,92 @@ function readJsonFile(path) {
   }
 }
 
+/** Validate structure of .a11y-markdown-config.json and emit warnings for bad fields. */
+function validateConfigSchema(fileConfig, configPath) {
+  const warnings = [];
+
+  if (typeof fileConfig !== "object" || fileConfig === null || Array.isArray(fileConfig)) {
+    warnings.push(`[config] ${configPath}: root must be a JSON object`);
+    return warnings;
+  }
+
+  const validTopKeys = new Set(["ignoredDirs", "maxIssuesPerRule", "rules", "failOn", "output"]);
+  for (const key of Object.keys(fileConfig)) {
+    if (!validTopKeys.has(key)) {
+      warnings.push(`[config] ${configPath}: unknown key "${key}" (valid: ${[...validTopKeys].join(", ")})`);
+    }
+  }
+
+  if ("ignoredDirs" in fileConfig && !Array.isArray(fileConfig.ignoredDirs)) {
+    warnings.push(`[config] ${configPath}: "ignoredDirs" must be an array of strings`);
+  }
+
+  if ("maxIssuesPerRule" in fileConfig && (!Number.isInteger(fileConfig.maxIssuesPerRule) || fileConfig.maxIssuesPerRule < 1)) {
+    warnings.push(`[config] ${configPath}: "maxIssuesPerRule" must be a positive integer`);
+  }
+
+  if ("failOn" in fileConfig && !["none", "error", "warning"].includes(fileConfig.failOn)) {
+    warnings.push(`[config] ${configPath}: "failOn" must be one of none|error|warning, got "${fileConfig.failOn}"`);
+  }
+
+  if ("output" in fileConfig) {
+    const out = fileConfig.output;
+    if (typeof out !== "object" || out === null) {
+      warnings.push(`[config] ${configPath}: "output" must be an object`);
+    } else {
+      if ("format" in out && !["text", "sarif", "both"].includes(out.format)) {
+        warnings.push(`[config] ${configPath}: "output.format" must be one of text|sarif|both, got "${out.format}"`);
+      }
+      if ("sarifPath" in out && typeof out.sarifPath !== "string") {
+        warnings.push(`[config] ${configPath}: "output.sarifPath" must be a string`);
+      }
+    }
+  }
+
+  if ("rules" in fileConfig) {
+    const rules = fileConfig.rules;
+    if (typeof rules !== "object" || Array.isArray(rules)) {
+      warnings.push(`[config] ${configPath}: "rules" must be an object`);
+    } else {
+      for (const [ruleName, ruleCfg] of Object.entries(rules)) {
+        if (typeof ruleCfg !== "object" || ruleCfg === null) {
+          warnings.push(`[config] ${configPath}: rules.${ruleName} must be an object with enabled/severity`);
+          continue;
+        }
+        if ("enabled" in ruleCfg && typeof ruleCfg.enabled !== "boolean") {
+          warnings.push(`[config] ${configPath}: rules.${ruleName}.enabled must be boolean`);
+        }
+        if ("severity" in ruleCfg && !["error", "warning"].includes(ruleCfg.severity)) {
+          warnings.push(`[config] ${configPath}: rules.${ruleName}.severity must be error|warning, got "${ruleCfg.severity}"`);
+        }
+      }
+    }
+  }
+
+  return warnings;
+}
+
+/** Return the set of markdown file paths changed vs a git ref. Returns null (all files) on error. */
+function getChangedFiles(root, baselineRef) {
+  try {
+    const raw = execSync(`git diff --name-only ${baselineRef} -- "*.md" "*.mdx"`, {
+      cwd: root,
+      encoding: "utf-8",
+      timeout: 10000,
+    });
+    const files = raw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && /\.(md|mdx)$/i.test(l))
+      .map((l) => join(root, l))
+      .filter((f) => existsSync(f));
+    return new Set(files);
+  } catch {
+    // Not a git repo, or ref doesn't exist (shallow clone, first commit, etc.)
+    return null; // signals caller to scan all files
+  }
+}
+
 function loadConfig(root, explicitConfigPath = null) {
   const defaultConfig = {
     ignoredDirs: [...DEFAULT_IGNORED_DIRS],
@@ -102,6 +196,12 @@ function loadConfig(root, explicitConfigPath = null) {
   const fileConfig = readJsonFile(configPath);
   if (!fileConfig) {
     return defaultConfig;
+  }
+
+  // Validate schema and emit warnings; validation never throws.
+  const schemaWarnings = validateConfigSchema(fileConfig, configPath);
+  for (const w of schemaWarnings) {
+    console.warn(w);
   }
 
   const mergedRules = { ...DEFAULT_RULES };
@@ -427,9 +527,24 @@ function main() {
   const effectiveFormat = process.env.A11Y_MARKDOWN_FORMAT || cli.format || config.output.format || "text";
   const effectiveOutput = cli.output || process.env.A11Y_MARKDOWN_OUTPUT || config.output.sarifPath;
 
+  const regressionMode = cli.regressionMode || process.env.A11Y_REGRESSION_MODE === "true";
+  const baselineRef = cli.baselineRef || process.env.A11Y_BASELINE_REF || "HEAD~1";
+
   const ignoredDirsSet = new Set(config.ignoredDirs);
-  const mdFiles = walkDir(cli.root, EXTENSIONS, ignoredDirsSet);
-  console.log(`Scanning ${mdFiles.length} markdown files...\n`);
+  let mdFiles = walkDir(cli.root, EXTENSIONS, ignoredDirsSet);
+
+  if (regressionMode) {
+    const changedSet = getChangedFiles(cli.root, baselineRef);
+    if (changedSet !== null) {
+      mdFiles = mdFiles.filter((f) => changedSet.has(f));
+      console.log(`Regression mode (baseline: ${baselineRef}): scanning ${mdFiles.length} changed markdown file(s)...\n`);
+    } else {
+      console.log(`Regression mode requested but git diff unavailable; scanning all ${mdFiles.length} file(s)...\n`);
+    }
+  } else {
+    console.log(`Scanning ${mdFiles.length} markdown files...\n`);
+  }
+
   for (const f of mdFiles) {
     checkFile(f, cli.root, config.rules);
   }

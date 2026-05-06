@@ -1,4 +1,5 @@
 {
+  "$schema": "./.github/schemas/markdown-config.schema.json",
   "ignoredDirs": [
     "node_modules",
     ".git",

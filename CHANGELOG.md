@@ -5,6 +5,29 @@ All notable changes to the Accessibility Agents project will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-05-07
+
+### Added
+
+- **Regression-only CI mode** for markdown scanner: `--regression` flag scopes the scan to files changed in the current git diff (`git diff --name-only <baseline-ref> -- "*.md" "*.mdx"`). Falls back to full scan when the ref is unavailable. Controlled via `A11Y_REGRESSION_MODE` env var and `regression_mode` workflow dispatch input.
+- **SARIF upload to GitHub Code Scanning**: `a11y-check.yml` markdown-lint job now uploads SARIF findings to the Code Scanning UI via `github/codeql-action/upload-sarif@v3` (category `markdown-accessibility`) in addition to storing it as a workflow artifact.
+- **JSON schema validation for config files**: `loadConfig()` now calls `validateConfigSchema()` which emits `::warning` annotations for unknown top-level keys, wrong types on `ignoredDirs`, `maxIssuesPerRule`, `failOn`, `output`, and per-rule `enabled`/`severity` fields. Validation never throws and never blocks the scan.
+- **JSON Schema definition**: `.github/schemas/markdown-config.schema.json` (JSON Schema draft-07) documenting all valid fields for `.a11y-markdown-config.json` with descriptions, types, and enums.
+- **`$schema` reference** in `templates/markdown-config-moderate.json` pointing to the new schema for editor intellisense.
+- **Markdown scanner unit tests**: `scripts/test-markdown-scanner.mjs` with 16 test cases covering clean file, missing alt, multi-H1, heading skip, ambiguous link, emoji heading, code-block skip, config rule disable, gate modes, SARIF output, and front-matter skip.
+- **Orchestrator validator integration tests**: `scripts/test-orchestrator-validator.mjs` with 25 tests verifying script existence, all 7 required orchestrators, non-empty specialist directory, passing exit code, Read patterns, and Task references.
+- **Release consistency guard workflow**: `.github/workflows/release-consistency-guard.yml` detects version drift across `plugin.yaml`, `gemini-extension.json`, `mcp-server/package.json`, and `manifest.json` on every push/PR to main. Also errors when CHANGELOG lacks an entry for the current version.
+- **Test steps in CI**: `validate-orchestrator-contracts.yml` now runs both test suites (`test-markdown-scanner.mjs` and `test-orchestrator-validator.mjs`) and triggers on changes to those scripts and the scanner itself.
+- **VS Code JSON schema bindings**: `.vscode/settings.json` now maps `.a11y-markdown-config.json`, `.a11y-office-config.json`, and `.a11y-pdf-config.json` to their respective schemas for editor intellisense and validation.
+
+### Changed
+
+- **`a11y-check.yml` SARIF upload step** now has `continue-on-error: true` so a clean run (no SARIF file generated) does not fail CI.
+- **Release consistency guard CHANGELOG check** promoted from warning to error: missing CHANGELOG entries now fail the workflow with `exit 1`.
+- **`a11y-check.yml` `markdown-lint` job** now has `permissions: security-events: write, contents: read`, `fetch-depth: 2` for git diff support, and conditionally passes `--regression` when `A11Y_REGRESSION_MODE=true`.
+- **`validate-orchestrator-contracts.yml`** workflow name updated and path triggers expanded to include both test scripts and the scanner file.
+- **`runScannerRaw` helper** in `test-markdown-scanner.mjs` switched from `execSync` to `spawnSync` to capture stderr on successful (exit 0) runs, enabling config schema warning assertions.
+
 ## [5.2.0] - 2026-05-06
 
 ### Added

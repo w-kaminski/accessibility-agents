@@ -20,5 +20,20 @@
 
   "files.associations": {
     "*.md": "markdown"
-  }
+  },
+
+  "json.schemas": [
+    {
+      "fileMatch": [".a11y-markdown-config.json"],
+      "url": "./.github/schemas/markdown-config.schema.json"
+    },
+    {
+      "fileMatch": [".a11y-office-config.json"],
+      "url": "./.github/schemas/office-config.schema.json"
+    },
+    {
+      "fileMatch": [".a11y-pdf-config.json"],
+      "url": "./.github/schemas/pdf-config.schema.json"
+    }
+  ]
 }
