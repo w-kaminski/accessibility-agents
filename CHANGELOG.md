@@ -5,6 +5,43 @@ All notable changes to the Accessibility Agents project will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-05-03
+
+### Added
+
+#### Claude Code Specialist Architecture (Resolves #111)
+
+- **73 Claude Code specialists moved to `.claude/specialists/`** — On-demand specialists are no longer registered in the Claude Code schema, cutting per-turn schema serialization from ~12,000-16,000 tokens to ~1,500 tokens. Specialists are loaded at runtime via `Read` + `Task` dispatch when orchestrators need them.
+- **Read+Task dispatch pattern** — All 7 `.claude/agents/` orchestrators now include a `## Specialist Dispatch` section documenting the two-step invocation pattern: read the specialist file body with `Read(".claude/specialists/<name>.md")`, then invoke `Task(description="<purpose>", prompt="<specialist_body>\n\n<task_context>")`.
+- **`.claude/AGENTS.md` updated** — Two-directory structure (`agents/` for 7 registered orchestrators, `specialists/` for 73 on-demand files) is fully documented with rationale and usage examples.
+
+#### New GitHub Skills
+
+- **`severity-mapping` skill** — Canonical severity level definitions and cross-domain normalization for web, document, and markdown audits. Score impact ranges, WCAG conformance alignment, and cross-format normalization. Now used by both web-severity-scoring and report-generation flows.
+- **25 skills synced to `.gemini/extensions/a11y-agents/skills/`** — Full Gemini CLI parity for all GitHub Copilot skill knowledge modules.
+
+#### New Instruction Files
+
+- **`agent-terminology.instructions.md`** — Glossary of agent-specific terminology applied to all `.md` and `.agent.md` files. Ensures consistent vocabulary (specialist vs. orchestrator, dispatch vs. invoke, etc.) across the entire agent library.
+
+### Changed
+
+#### Structural Fixes: All 80 `.github/agents/` Files
+
+- Fixed all structural gaps identified by `scripts/validate-agents.js`: missing `tools:` fields, empty body sections, description length violations, and emoji in prose content.
+- `accessibility-regression-detector.agent.md` — Added missing `## MCP Tools` separator and blank lines around lists.
+- `document-accessibility-wizard.agent.md` — Filled empty `## Authoritative Sources` section, added blank lines around lists.
+- All 7 instruction files (`.github/instructions/`) — Fixed MD001, MD022, MD031, MD032, and MD058 markdownlint violations.
+- `.github/prompts/README.md` — Fixed all heading/table/fence blank-line errors (MD022, MD031, MD058).
+- `.github/skills/markdown-accessibility/SKILL.md` — Fixed MD032 blank-line-around-list violation.
+- `.github/skills/severity-mapping/SKILL.md` — Shortened description to spec-compliant under 200 characters.
+
+### Fixed
+
+- **All pre-commit checks pass** — 0 validator errors, 0 markdownlint errors, 0 warnings across 80/80 `.github/agents/` files.
+- **Claude Code token cost** — Specialist migration resolves #111: schema serialization reduced from ~12-16k tokens/turn to ~1.5k tokens/turn.
+- **GitHub Skills spec compliance** — All skill descriptions are under 200 characters per the agentskills.io specification.
+
 ## [5.0.0] - 2026-04-16
 
 ### Added
