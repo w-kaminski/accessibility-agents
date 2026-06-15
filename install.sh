@@ -1891,16 +1891,63 @@ if [ "$install_codex" = true ] && { [ -d "$CODEX_PLUGIN_SRC" ] || [ -d "$CODEX_S
   if [ "$choice" = "1" ]; then
     CODEX_TARGET_DIR="$(pwd)/.codex"
     CODEX_AGENTS_PROFILE_DIR="$(pwd)/.agents"
-    CODEX_PLUGIN_DST="$(pwd)/plugins/a11y-agents-codex"
+    CODEX_PLUGIN_DST="$CODEX_AGENTS_PROFILE_DIR/plugins/a11y-agents-codex"
     CODEX_EXTENSION_DST="$(pwd)/.a11y-agents/extensions"
     mkdir -p "$CODEX_TARGET_DIR"
   else
     CODEX_TARGET_DIR="$HOME/.codex"
     CODEX_AGENTS_PROFILE_DIR="$HOME/.agents"
-    CODEX_PLUGIN_DST="$HOME/plugins/a11y-agents-codex"
+    CODEX_PLUGIN_DST="$CODEX_AGENTS_PROFILE_DIR/plugins/a11y-agents-codex"
     CODEX_EXTENSION_DST="$HOME/.a11y-agents/extensions"
     mkdir -p "$CODEX_TARGET_DIR"
   fi
+  CODEX_CONFIG_DST="$CODEX_TARGET_DIR/config.toml"
+  python3 - "$CODEX_CONFIG_DST" << 'PYEOF'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+lines = text.splitlines()
+
+def ensure_agent_number(lines, key, value):
+    header = None
+    for i, line in enumerate(lines):
+        if line.strip() == "[agents]":
+            header = i
+            break
+    if header is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["[agents]", f"{key} = {value}"])
+        return lines
+
+    end = len(lines)
+    for i in range(header + 1, len(lines)):
+        if re.match(r"^\s*\[[^\]]+\]\s*$", lines[i]):
+            end = i
+            break
+
+    pattern = re.compile(rf"^(\s*{re.escape(key)}\s*=\s*)(\d+)(.*)$")
+    for i in range(header + 1, end):
+        match = pattern.match(lines[i])
+        if match:
+            current = int(match.group(2))
+            if current < value:
+                lines[i] = f"{match.group(1)}{value}{match.group(3)}"
+            return lines
+
+    lines.insert(header + 1, f"{key} = {value}")
+    return lines
+
+lines = ensure_agent_number(lines, "max_depth", 2)
+lines = ensure_agent_number(lines, "max_threads", 10)
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PYEOF
+  add_manifest_entry "codex-agent-config/path:$CODEX_CONFIG_DST"
+  echo "    + Configured Codex subagent nesting in $CODEX_CONFIG_DST"
   if [ -d "$CODEX_PLUGIN_SRC" ]; then
     mkdir -p "$CODEX_PLUGIN_DST"
     cp -R "$CODEX_PLUGIN_SRC"/. "$CODEX_PLUGIN_DST/"
@@ -1983,7 +2030,7 @@ if [ "$install_codex" = true ] && { [ -d "$CODEX_PLUGIN_SRC" ] || [ -d "$CODEX_S
       "name": "a11y-agents-codex",
       "source": {
         "source": "local",
-        "path": "$CODEX_PLUGIN_DST"
+        "path": "./a11y-agents-codex"
       },
       "policy": {
         "installation": "INSTALLED_BY_DEFAULT",
@@ -1997,14 +2044,40 @@ EOF
       add_manifest_entry "codex-marketplace/path:$CODEX_MARKETPLACE_JSON"
       echo "    + Codex plugin marketplace registered at $CODEX_MARKETPLACE_JSON"
     elif grep -q '"a11y-agents-codex"' "$CODEX_MARKETPLACE_JSON"; then
-      echo "    + Codex plugin marketplace already includes a11y-agents-codex"
+      if grep -q '"path"[[:space:]]*:[[:space:]]*"\./a11y-agents-codex"' "$CODEX_MARKETPLACE_JSON"; then
+        echo "    + Codex plugin marketplace already includes a11y-agents-codex"
+      else
+        python3 - "$CODEX_MARKETPLACE_JSON" << 'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+for plugin in data.get("plugins", []):
+    if plugin.get("name") == "a11y-agents-codex":
+        plugin["source"] = {"source": "local", "path": "./a11y-agents-codex"}
+        plugin.setdefault("policy", {"installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL"})
+        plugin.setdefault("category", "Developer Tools")
+        break
+else:
+    data.setdefault("plugins", []).append({
+        "name": "a11y-agents-codex",
+        "source": {"source": "local", "path": "./a11y-agents-codex"},
+        "policy": {"installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL"},
+        "category": "Developer Tools",
+    })
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PYEOF
+        add_manifest_entry "codex-marketplace-repaired/path:$CODEX_MARKETPLACE_JSON"
+        echo "    + Repaired Codex plugin marketplace relative path at $CODEX_MARKETPLACE_JSON"
+      fi
     else
       echo "    ! Existing Codex marketplace left unchanged at $CODEX_MARKETPLACE_JSON"
       echo "      Router skills and subagents were installed directly."
     fi
   fi
   if [ ! -d "$CODEX_PLUGIN_SRC" ] && [ -f "$CODEX_CONFIG_SRC" ]; then
-    CODEX_CONFIG_DST="$CODEX_TARGET_DIR/config.toml"
     merge_config_file "$CODEX_CONFIG_SRC" "$CODEX_CONFIG_DST" "config.toml (Codex experimental roles)"
     add_manifest_entry "codex-config/path:$CODEX_CONFIG_DST"
   fi

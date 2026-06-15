@@ -26,3 +26,7 @@ After specialists finish, synthesize their findings as the lead. Do not simply c
 
 Return concise findings with severity, file references when available, impacted users or workflows, applicable WCAG/public-standard or extension-rule mapping, and recommended fixes. If there are no findings in scope, say that clearly and mention residual risk or test gaps.
 """
+
+[agents]
+max_depth = 2
+max_threads = 10

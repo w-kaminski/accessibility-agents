@@ -1508,17 +1508,79 @@ if ($InstallCodex -and ((Test-Path $CodexPluginSrc) -or (Test-Path $CodexSkillsS
     if ($Choice -eq "1") {
         $CodexTargetDir = Join-Path (Get-Location) ".codex"
         $CodexAgentsProfileDir = Join-Path (Get-Location) ".agents"
-        $CodexPluginDst = Join-Path (Join-Path (Get-Location) "plugins") "a11y-agents-codex"
+        $CodexPluginDst = Join-Path (Join-Path $CodexAgentsProfileDir "plugins") "a11y-agents-codex"
         $CodexExtensionDst = Join-Path (Get-Location) ".a11y-agents\extensions"
     }
     else {
         $CodexTargetDir = Join-Path $env:USERPROFILE ".codex"
         $CodexAgentsProfileDir = Join-Path $env:USERPROFILE ".agents"
-        $CodexPluginDst = Join-Path (Join-Path $env:USERPROFILE "plugins") "a11y-agents-codex"
+        $CodexPluginDst = Join-Path (Join-Path $CodexAgentsProfileDir "plugins") "a11y-agents-codex"
         $CodexExtensionDst = Join-Path $env:USERPROFILE ".a11y-agents\extensions"
     }
 
     New-Item -ItemType Directory -Force -Path $CodexTargetDir | Out-Null
+    $CodexConfigDst = Join-Path $CodexTargetDir "config.toml"
+    $CodexConfigLines = @()
+    if (Test-Path $CodexConfigDst) {
+        $CodexConfigLines = @(Get-Content -Path $CodexConfigDst)
+    }
+    function Set-CodexAgentNumber {
+        param(
+            [string[]]$Lines,
+            [string]$Key,
+            [int]$Value
+        )
+        $Header = -1
+        for ($i = 0; $i -lt $Lines.Count; $i++) {
+            if ($Lines[$i].Trim() -eq "[agents]") {
+                $Header = $i
+                break
+            }
+        }
+        if ($Header -lt 0) {
+            $Updated = @($Lines)
+            if (($Updated.Count -gt 0) -and ($Updated[-1].Trim() -ne "")) {
+                $Updated += ""
+            }
+            $Updated += "[agents]"
+            $Updated += "$Key = $Value"
+            return $Updated
+        }
+
+        $End = $Lines.Count
+        for ($i = $Header + 1; $i -lt $Lines.Count; $i++) {
+            if ($Lines[$i] -match '^\s*\[[^\]]+\]\s*$') {
+                $End = $i
+                break
+            }
+        }
+
+        for ($i = $Header + 1; $i -lt $End; $i++) {
+            if ($Lines[$i] -match "^\s*$([regex]::Escape($Key))\s*=\s*(\d+)(.*)$") {
+                $Current = [int]$Matches[1]
+                if ($Current -lt $Value) {
+                    $Lines[$i] = "$Key = $Value"
+                }
+                return $Lines
+            }
+        }
+
+        $Updated = @()
+        if ($Header -ge 0) {
+            $Updated += $Lines[0..$Header]
+        }
+        $Updated += "$Key = $Value"
+        if (($Header + 1) -lt $Lines.Count) {
+            $Updated += $Lines[($Header + 1)..($Lines.Count - 1)]
+        }
+        return $Updated
+    }
+    $CodexConfigLines = Set-CodexAgentNumber -Lines $CodexConfigLines -Key "max_depth" -Value 2
+    $CodexConfigLines = Set-CodexAgentNumber -Lines $CodexConfigLines -Key "max_threads" -Value 10
+    Set-Content -Path $CodexConfigDst -Value $CodexConfigLines -Encoding UTF8
+    Add-ManifestEntry "codex-agent-config/path:$CodexConfigDst"
+    Write-Host "    + Configured Codex subagent nesting in $CodexConfigDst"
+
     if (Test-Path $CodexPluginSrc) {
         New-Item -ItemType Directory -Force -Path $CodexPluginDst | Out-Null
         Get-ChildItem -Path $CodexPluginSrc -Force | ForEach-Object {
@@ -1601,7 +1663,7 @@ if ($InstallCodex -and ((Test-Path $CodexPluginSrc) -or (Test-Path $CodexSkillsS
                 plugins = @(
                     @{
                         name = "a11y-agents-codex"
-                        source = @{ source = "local"; path = $CodexPluginDst }
+                        source = @{ source = "local"; path = "./a11y-agents-codex" }
                         policy = @{ installation = "INSTALLED_BY_DEFAULT"; authentication = "ON_INSTALL" }
                         category = "Developer Tools"
                     }
@@ -1612,7 +1674,37 @@ if ($InstallCodex -and ((Test-Path $CodexPluginSrc) -or (Test-Path $CodexSkillsS
             Write-Host "    + Codex plugin marketplace registered at $CodexMarketplaceJson"
         }
         elseif ((Get-Content -Path $CodexMarketplaceJson -Raw) -match '"a11y-agents-codex"') {
-            Write-Host "    + Codex plugin marketplace already includes a11y-agents-codex"
+            $MarketplaceRaw = Get-Content -Path $CodexMarketplaceJson -Raw
+            if ($MarketplaceRaw -match '"path"\s*:\s*"\./a11y-agents-codex"') {
+                Write-Host "    + Codex plugin marketplace already includes a11y-agents-codex"
+            }
+            else {
+                $Marketplace = $MarketplaceRaw | ConvertFrom-Json
+                $FoundCodexPlugin = $false
+                foreach ($Plugin in $Marketplace.plugins) {
+                    if ($Plugin.name -eq "a11y-agents-codex") {
+                        $Plugin.source = [PSCustomObject]@{ source = "local"; path = "./a11y-agents-codex" }
+                        if (-not $Plugin.policy) {
+                            $Plugin | Add-Member -NotePropertyName "policy" -NotePropertyValue ([PSCustomObject]@{ installation = "INSTALLED_BY_DEFAULT"; authentication = "ON_INSTALL" })
+                        }
+                        if (-not $Plugin.category) {
+                            $Plugin | Add-Member -NotePropertyName "category" -NotePropertyValue "Developer Tools"
+                        }
+                        $FoundCodexPlugin = $true
+                    }
+                }
+                if (-not $FoundCodexPlugin) {
+                    $Marketplace.plugins += [PSCustomObject]@{
+                        name = "a11y-agents-codex"
+                        source = [PSCustomObject]@{ source = "local"; path = "./a11y-agents-codex" }
+                        policy = [PSCustomObject]@{ installation = "INSTALLED_BY_DEFAULT"; authentication = "ON_INSTALL" }
+                        category = "Developer Tools"
+                    }
+                }
+                $Marketplace | ConvertTo-Json -Depth 10 | Set-Content -Path $CodexMarketplaceJson -Encoding UTF8
+                Add-ManifestEntry "codex-marketplace-repaired/path:$CodexMarketplaceJson"
+                Write-Host "    + Repaired Codex plugin marketplace relative path at $CodexMarketplaceJson"
+            }
         }
         else {
             Write-Host "    ! Existing Codex marketplace left unchanged at $CodexMarketplaceJson"

@@ -85,6 +85,7 @@ if (fs.existsSync(accessibilityLeadToml)) {
     'dispatch matching Codex subagents by default',
     'same coordinator-worker pattern as Claude Code',
     'ship/no-ship call',
+    'max_depth = 2',
   ]) {
     if (!body.includes(phrase)) {
       fail(`codex-plugin/agents/accessibility-lead.toml: missing lead-dispatch guidance phrase "${phrase}".`);
@@ -96,9 +97,11 @@ const webRouterSkill = path.join(pluginRoot, 'skills', 'web-accessibility', 'SKI
 if (fs.existsSync(webRouterSkill)) {
   const body = fs.readFileSync(webRouterSkill, 'utf8');
   for (const phrase of [
-    'Start with `accessibility-lead` for every user-facing web accessibility task',
+    'Explicitly spawn `accessibility-lead` as a Codex custom subagent',
+    '~/.agents/plugins/a11y-agents-codex/references/specialists/',
     'Dispatch matching Codex custom subagents by default',
     'Do not make users manually name every specialist',
+    'the root session must spawn `accessibility-lead` and the selected specialists directly',
     'The lead synthesizes specialist output',
   ]) {
     if (!body.includes(phrase)) {
@@ -115,6 +118,12 @@ for (const installerRel of ['install.sh', 'install.ps1']) {
       'Pruned legacy Codex skill mirror',
       'CODEX_LEGACY_SKILL_NAMES',
       'codex-legacy-skill-pruned',
+      'Configured Codex subagent nesting',
+      'max_depth',
+      'max_threads',
+      'codex-agent-config',
+      './a11y-agents-codex',
+      'codex-marketplace-repaired',
     ]) {
       if (!body.includes(phrase)) {
         fail(`${installerRel}: missing Codex legacy skill cleanup phrase "${phrase}".`);

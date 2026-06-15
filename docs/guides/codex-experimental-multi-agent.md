@@ -24,6 +24,8 @@ The v6 plugin avoids that by using:
 
 This means Codex can see the Accessibility Agents entry points without loading every specialist instruction into the first turn.
 
+Codex defaults `agents.max_depth` to `1`, which lets the root session spawn one child agent but prevents that child from spawning specialists. Accessibility Agents needs the Claude-style path `root session -> accessibility-lead -> specialist agents`, so the installer configures `agents.max_depth = 2` and `agents.max_threads = 10`.
+
 ## What Gets Installed
 
 When you select Codex support, the universal installer installs:
@@ -36,6 +38,8 @@ When you select Codex support, the universal installer installs:
 - install manifest entries for repair and uninstall
 
 The old direct Codex skill pack remains in the repository as a fallback source, but the v6 installer prefers the plugin path.
+
+For Codex marketplace loading, the installed marketplace entry uses the relative plugin path `./a11y-agents-codex`. Absolute local paths are rejected by Codex marketplace loading and will make Codex skip the plugin payload.
 
 ## Router Skills
 
@@ -198,7 +202,9 @@ If Codex does not seem to see the plugin:
 3. Confirm the router skills were installed.
 4. Confirm `.codex/agents/` or the global Codex agent directory contains Accessibility Agents TOML files.
 5. Confirm built-in extension manifests were installed.
-6. Ask Codex to use a router skill or a named lead agent.
+6. Confirm Codex config contains `[agents]` with `max_depth = 2`.
+7. Confirm the Codex marketplace entry points to `./a11y-agents-codex`.
+8. Ask Codex to use a router skill or a named lead agent.
 
 If Codex reports shortened skill descriptions, the old direct skill pack may still be installed. Re-run the v6 installer so Codex uses the plugin path and small router surface. The v6 installer prunes Accessibility Agents-owned legacy skill mirrors from `.codex/skills` while leaving unrelated personal skills alone.
 
